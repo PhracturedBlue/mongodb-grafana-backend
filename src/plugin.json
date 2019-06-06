@@ -8,7 +8,10 @@
   },
 
   "metrics": true,
-  "annotations": false,
+  "annotations": true,
+  "alerting": true,
+  "backend": true,
+  "executable": "mongodb-plugin",
 
   "info": {
     "description": "MongoDB datasource",
