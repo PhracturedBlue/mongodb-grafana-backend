@@ -5,6 +5,7 @@ import (
 	"strings"
 	"strconv"
 	"time"
+	"errors"
 
 	simplejson "github.com/bitly/go-simplejson"
 
@@ -31,15 +32,20 @@ func (t *JsonDatasource) Query(ctx context.Context, tsdbReq *datasource.Datasour
 		return nil, err
 	}
 	queryType := json.Get("queryType").MustString()
+	t.logger.Debug(fmt.Sprintf("Request: %+v", tsdbReq))
 
+	var res *datasource.DatasourceResponse
 	switch queryType {
-	case "metricsQuery":
-		//return t.executeMetricsQuery(ctx, tsdbReq)
-		return nil, nil
+	case "testConnection":
+		res, err = t.executeTestConnection(ctx, tsdbReq)
+	//case "metricsQuery":
+	//	//return t.executeMetricsQuery(ctx, tsdbReq)
+	//	return nil, nil
 	case "timeSeriesQuery":
 		fallthrough
 	default:
-		res, err := t.executeTimSeriesQuery(ctx, tsdbReq)
+		res, err = t.executeTimSeriesQuery(ctx, tsdbReq)
+	}
 		// Ths is a work-around for the 'Metric request error'
 		if res == nil && err != nil {
 			response := &datasource.DatasourceResponse{}
@@ -51,23 +57,29 @@ func (t *JsonDatasource) Query(ctx context.Context, tsdbReq *datasource.Datasour
 			return response, nil
 		}
 		return res, err
+}
+
+func (t *JsonDatasource) executeTestConnection(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
+	client, _, err := t.getClient(ctx, tsdbReq)
+	if err != nil {
+		return nil, err
 	}
+	err = client.Ping(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	err = client.Disconnect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	response := &datasource.DatasourceResponse{}
+	return response, nil
 }
 
 func (t *JsonDatasource) executeTimSeriesQuery(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
 	response := &datasource.DatasourceResponse{}
 
-	t.logger.Debug(fmt.Sprintf("Request: %+v", tsdbReq))
-
-	json, err := simplejson.NewJson([]byte(tsdbReq.Datasource.JsonData))
-	if err  != nil {
-		return nil, err
-	}
-	uri := json.Get("mongodb_url").MustString("mongodb://localhost:27017")
-	db := json.Get("mongodb_db").MustString("test")
-
-	clientOptions := options.Client().ApplyURI(uri)
-	client, err := mongo.Connect(ctx, clientOptions)
+	client, db, err := t.getClient(ctx, tsdbReq)
 	if err != nil {
 		return nil, err
 	}
@@ -78,11 +90,11 @@ func (t *JsonDatasource) executeTimSeriesQuery(ctx context.Context, tsdbReq *dat
 	t.logger.Debug("Connected to MongoDB")
 
 	for _, query := range tsdbReq.Queries {
-		aggregate, err := t.parseTarget(query.ModelJson, tsdbReq)
+		coll, aggregate, err := t.parseTarget(query.ModelJson, tsdbReq)
 		if err != nil {
 			return nil, err
 		}
-		collection := client.Database(db).Collection("test")
+		collection := client.Database(db).Collection(*coll)
 		t.logger.Debug(fmt.Sprintf("Sending: %+v", aggregate))
 		resp, err := collection.Aggregate(ctx, aggregate, nil)
 		if err != nil {
@@ -109,13 +121,26 @@ func (t *JsonDatasource) executeTimSeriesQuery(ctx context.Context, tsdbReq *dat
 	return response, nil
 }
 
-func (t *JsonDatasource) parseTarget(queryStr string, tsdbReq *datasource.DatasourceRequest) (interface {}, error) {
+func (t *JsonDatasource) getClient(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*mongo.Client, string, error) {
+	json, err := simplejson.NewJson([]byte(tsdbReq.Datasource.JsonData))
+	if err  != nil {
+		return nil, "", err
+	}
+	uri := json.Get("mongodb_url").MustString("mongodb://localhost:27017")
+	db := json.Get("mongodb_db").MustString("test")
+
+	clientOptions := options.Client().ApplyURI(uri)
+	client, err := mongo.Connect(ctx, clientOptions)
+	return client, db, err
+}
+
+func (t *JsonDatasource) parseTarget(queryStr string, tsdbReq *datasource.DatasourceRequest) (*string, interface {}, error) {
 	var aggregate interface{}
 
 	t.logger.Debug("QueryString: ", queryStr)
 	query, err := simplejson.NewJson([]byte(queryStr))
 	if err  != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	target := query.Get("target").MustString()
 	from := tsdbReq.TimeRange.FromEpochMs
@@ -124,6 +149,16 @@ func (t *JsonDatasource) parseTarget(queryStr string, tsdbReq *datasource.Dataso
 	if maxDataPoints == 0 {
 		maxDataPoints = 1
 	}
+	sepIdx := strings.Index(target, "(")
+	if sepIdx == -1 {
+		return nil, nil, errors.New("Could not locate db command")
+	}
+	sections := strings.Split(target[3:sepIdx], ".")
+	if sections[1] != "aggregate" {
+		return nil, nil, errors.New("Only 'aggregate' queries are supported")
+	}
+	target = target[sepIdx+1:len(target)-1]
+	collection := sections[0]
 	target = strings.Replace(target, "\"$from\"", "{\"$date\": {\"$numberLong\": \"" + strconv.FormatInt(from, 10) + "\"}}", -1)
 	target = strings.Replace(target, "\"$to\"", "{\"$date\": {\"$numberLong\": \"" + strconv.FormatInt(to, 10) + "\"}}", -1)
 	target = strings.Replace(target, "\"$maxDataPoints\"", strconv.Itoa(maxDataPoints), -1)
@@ -132,9 +167,9 @@ func (t *JsonDatasource) parseTarget(queryStr string, tsdbReq *datasource.Dataso
 	err = bson.UnmarshalExtJSON([]byte(target), true, &aggregate)
 	if err != nil {
 		t.logger.Error(fmt.Sprintf("Failed: %+v", err))
-		return nil, err
+		return nil, nil, err
 	}
-	return aggregate, nil
+	return &collection, aggregate, nil
 }
 
 
