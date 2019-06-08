@@ -343,6 +343,7 @@ function runAggregateQuery( requestId, queryId, body, queryArgs, res, next )
 function getTableResults(docs)
 {
   var columns = {}
+  var types = {}
   
   // Build superset of columns
   for ( var i = 0; i < docs.length; i++)
@@ -357,7 +358,7 @@ function getTableResults(docs)
         columns[propName] = 
         {
           text : propName,
-          type : "text"
+          type : "string"
         }
       }
     }
@@ -369,13 +370,31 @@ function getTableResults(docs)
   {
     var doc = docs[i]
     row = []
+    types = {}
     // All cols
     for ( var colName in columns )
     {
       var col = columns[colName]
       if ( col.text in doc )
       {
-        row.push(doc[col.text])
+        var val = doc[col.text]
+        if (!(col.text in types) && doc[col.text] != null)
+        {
+          var this_type = typeof doc[col.text]
+          if (this_type == "object") {
+            if (doc[col.text] instanceof Date) {
+              this_type = "time"
+              val = doc[col.text].getTime()
+            } else {
+              this_type = "string"
+            }
+          }
+          types[col.text] = {
+              text : col.text,
+              type : this_type
+          }
+        }
+        row.push(val)
       }
       else
       {
@@ -383,6 +402,11 @@ function getTableResults(docs)
       }
     }
     rows.push(row)
+  }
+  for (var col in types)
+  {
+    console.log(col + " : " + types[col].type)
+    columns[col] = types[col]
   }
   
   var results = {}

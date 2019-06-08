@@ -1,19 +1,18 @@
 package main
 
 import (
-	"crypto/tls"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"net"
-	"net/http"
 	"strings"
+	"strconv"
 	"time"
 
 	simplejson "github.com/bitly/go-simplejson"
-	"golang.org/x/net/context/ctxhttp"
 
 	"golang.org/x/net/context"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 
 	"github.com/grafana/grafana_plugin_model/go/datasource"
 	hclog "github.com/hashicorp/go-hclog"
@@ -27,256 +26,146 @@ type JsonDatasource struct {
 
 func (t *JsonDatasource) Query(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
 	t.logger.Debug("Query", "datasource", tsdbReq.Datasource.Name, "TimeRange", tsdbReq.TimeRange)
-
-	remoteDsReq, err := t.createRequest(tsdbReq)
-	t.logger.Debug(fmt.Sprintf("%+v", tsdbReq))
-	if err != nil {
+	json, err := simplejson.NewJson([]byte(tsdbReq.Queries[0].ModelJson))
+	if err  != nil {
 		return nil, err
 	}
+	queryType := json.Get("queryType").MustString()
 
-	res, err := ctxhttp.Do(ctx, httpClient, remoteDsReq.req)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-
-	t.logger.Debug("Here 2")
-	if res.StatusCode != http.StatusOK {
-		t.logger.Debug("Here 2a")
-		return nil, fmt.Errorf("invalid status code. status: %v", res.Status)
-	}
-
-	body, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
-	}
-	t.logger.Debug("Query Complete")
-	switch remoteDsReq.queryType {
-	case "search":
-		return t.parseSearchResponse(body)
+	switch queryType {
+	case "metricsQuery":
+		//return t.executeMetricsQuery(ctx, tsdbReq)
+		return nil, nil
+	case "timeSeriesQuery":
+		fallthrough
 	default:
-		return t.parseQueryResponse(remoteDsReq.queries, body)
+		res, err := t.executeTimSeriesQuery(ctx, tsdbReq)
+		// Ths is a work-around for the 'Metric request error'
+		if res == nil && err != nil {
+			response := &datasource.DatasourceResponse{}
+			qr := datasource.QueryResult{
+				RefId:  "A",
+				Error:  fmt.Sprintf("%s", err),
+			}
+			response.Results = append(response.Results, &qr)
+			return response, nil
+		}
+		return res, err
 	}
 }
 
-func (t *JsonDatasource) createRequest(tsdbReq *datasource.DatasourceRequest) (*remoteDatasourceRequest, error) {
-	jQueries := make([]*simplejson.Json, 0)
+func (t *JsonDatasource) executeTimSeriesQuery(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
+	response := &datasource.DatasourceResponse{}
+
+	t.logger.Debug(fmt.Sprintf("Request: %+v", tsdbReq))
+
+	json, err := simplejson.NewJson([]byte(tsdbReq.Datasource.JsonData))
+	if err  != nil {
+		return nil, err
+	}
+	uri := json.Get("mongodb_url").MustString("mongodb://localhost:27017")
+	db := json.Get("mongodb_db").MustString("test")
+
+	clientOptions := options.Client().ApplyURI(uri)
+	client, err := mongo.Connect(ctx, clientOptions)
+	if err != nil {
+		return nil, err
+	}
+	err = client.Ping(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	t.logger.Debug("Connected to MongoDB")
+
 	for _, query := range tsdbReq.Queries {
-		json, err := simplejson.NewJson([]byte(query.ModelJson))
+		aggregate, err := t.parseTarget(query.ModelJson, tsdbReq)
 		if err != nil {
 			return nil, err
 		}
-
-		jQueries = append(jQueries, json)
-	}
-
-	queryType := "query"
-	if len(jQueries) > 0 {
-		queryType = jQueries[0].Get("queryType").MustString("query")
-	}
-
-	t.logger.Debug("createRequest", "queryType", queryType)
-
-	payload := simplejson.New()
-
-	switch queryType {
-	case "search":
-		payload.Set("target", jQueries[0].Get("target").MustString())
-	default:
-		payload.SetPath([]string{"range", "to"}, tsdbReq.TimeRange.ToEpochMs)
-		payload.SetPath([]string{"range", "from"}, tsdbReq.TimeRange.FromEpochMs)
-		payload.Set("targets", jQueries)
-		json, _err := simplejson.NewJson([]byte(tsdbReq.Datasource.JsonData))
-		if _err != nil {
-			t.logger.Error("Failed to parse datasource json")
-			return nil, _err
+		collection := client.Database(db).Collection("test")
+		t.logger.Debug(fmt.Sprintf("Sending: %+v", aggregate))
+		resp, err := collection.Aggregate(ctx, aggregate, nil)
+		if err != nil {
+			return nil, err
 		}
-
-		payload.SetPath([]string{"db", "url"}, json.Get("mongodb_url"))
-		payload.SetPath([]string{"db", "db"}, json.Get("mongodb_db"))
+		defer resp.Close(ctx)
+		t.logger.Debug(fmt.Sprintf("Response: %+v", resp))
+		res, err := t.parseQueryResponse(ctx, query, resp)
+		if err != nil {
+			return nil, err
+		}
+		response.Results = append(response.Results, res)
 	}
 
-
-	rbody, err := payload.MarshalJSON()
+	err = client.Disconnect(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	url := tsdbReq.Datasource.Url + "/" + queryType
-	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(string(rbody)))
+	t.logger.Debug("Connection to MongoDB closed.")
 	if err != nil {
 		return nil, err
-	}
-
-	//if tsdbReq.Datasource.BasicAuth {
-	//	req.SetBasicAuth(
-	//		tsdbReq.Datasource.BasicAuthUser,
-	//		tsdbReq.Datasource.BasicAuthPassword)
-	//}
-
-	req.Header.Add("Content-Type", "application/json")
-
-	return &remoteDatasourceRequest{
-		queryType: queryType,
-		req:       req,
-		queries:   jQueries,
-	}, nil
-}
-
-func (t *JsonDatasource) parseQueryResponse(queries []*simplejson.Json, body []byte) (*datasource.DatasourceResponse, error) {
-	t.logger.Debug(fmt.Sprintf("Body: %s", body))
-	response := &datasource.DatasourceResponse{}
-	responseBody := []TargetResponseDTO{}
-	err := json.Unmarshal(body, &responseBody)
-	if err != nil {
-		t.logger.Error("Failed to unmarshal")
-		return nil, err
-	}
-	t.logger.Debug(fmt.Sprintf("Response: %+v", responseBody))
-
-	for i, r := range responseBody {
-		refId := r.Target
-
-		if len(queries) > i {
-			refId = queries[i].Get("refId").MustString()
-		}
-
-		qr := datasource.QueryResult{
-			RefId:  refId,
-			Series: make([]*datasource.TimeSeries, 0),
-			Tables: make([]*datasource.Table, 0),
-		}
-
-		if len(r.Columns) > 0 {
-			table := datasource.Table{
-				Columns: make([]*datasource.TableColumn, 0),
-				Rows:    make([]*datasource.TableRow, 0),
-			}
-
-			for _, c := range r.Columns {
-				table.Columns = append(table.Columns, &datasource.TableColumn{
-					Name: c.Text,
-				})
-			}
-
-			for _, row := range r.Rows {
-				values := make([]*datasource.RowValue, 0)
-
-				for i, cell := range row {
-					rv := datasource.RowValue{}
-
-					switch r.Columns[i].Type {
-					case "time":
-						if timeValue, ok := cell.(float64); ok {
-							rv.Int64Value = int64(timeValue)
-						}
-						rv.Kind = datasource.RowValue_TYPE_INT64
-					case "number":
-						if numberValue, ok := cell.(float64); ok {
-							rv.Int64Value = int64(numberValue)
-						}
-						rv.Kind = datasource.RowValue_TYPE_INT64
-					case "string":
-						if stringValue, ok := cell.(string); ok {
-							rv.StringValue = stringValue
-						}
-						rv.Kind = datasource.RowValue_TYPE_STRING
-					default:
-						t.logger.Debug(fmt.Sprintf("failed to parse value %v of type %T", cell, cell))
-					}
-
-					values = append(values, &rv)
-				}
-
-				table.Rows = append(table.Rows, &datasource.TableRow{Values: values})
-			}
-
-			qr.Tables = append(qr.Tables, &table)
-		} else {
-			serie := &datasource.TimeSeries{Name: r.Target}
-
-			for _, p := range r.DataPoints {
-				serie.Points = append(serie.Points, &datasource.Point{
-					Timestamp: int64(p[1]),
-					Value:     p[0],
-				})
-			}
-
-			qr.Series = append(qr.Series, serie)
-		}
-
-		response.Results = append(response.Results, &qr)
 	}
 
 	return response, nil
 }
 
-func (t *JsonDatasource) parseSearchResponse(body []byte) (*datasource.DatasourceResponse, error) {
-	jBody, err := simplejson.NewJson(body)
-	if err != nil {
+func (t *JsonDatasource) parseTarget(queryStr string, tsdbReq *datasource.DatasourceRequest) (interface {}, error) {
+	var aggregate interface{}
+
+	t.logger.Debug("QueryString: ", queryStr)
+	query, err := simplejson.NewJson([]byte(queryStr))
+	if err  != nil {
 		return nil, err
 	}
-
-	metricCount := len(jBody.MustArray())
-	table := datasource.Table{
-		Columns: []*datasource.TableColumn{
-			&datasource.TableColumn{Name: "text"},
-		},
-		Rows: make([]*datasource.TableRow, 0),
+	target := query.Get("target").MustString()
+	from := tsdbReq.TimeRange.FromEpochMs
+	to := tsdbReq.TimeRange.ToEpochMs
+	maxDataPoints := query.Get("maxDataPoints").MustInt(1)
+	if maxDataPoints == 0 {
+		maxDataPoints = 1
 	}
+	target = strings.Replace(target, "\"$from\"", "{\"$date\": {\"$numberLong\": \"" + strconv.FormatInt(from, 10) + "\"}}", -1)
+	target = strings.Replace(target, "\"$to\"", "{\"$date\": {\"$numberLong\": \"" + strconv.FormatInt(to, 10) + "\"}}", -1)
+	target = strings.Replace(target, "\"$maxDataPoints\"", strconv.Itoa(maxDataPoints), -1)
+	t.logger.Debug("Target: ", target)
 
-	for n := 0; n < metricCount; n++ {
-		values := make([]*datasource.RowValue, 0)
-		jm := jBody.GetIndex(n)
-
-		if text, found := jm.CheckGet("text"); found {
-			values = append(values, &datasource.RowValue{
-				Kind:        datasource.RowValue_TYPE_STRING,
-				StringValue: text.MustString(),
-			})
-			values = append(values, &datasource.RowValue{
-				Kind:       datasource.RowValue_TYPE_INT64,
-				Int64Value: jm.Get("value").MustInt64(),
-			})
-
-			if len(table.Columns) == 1 {
-				table.Columns = append(table.Columns, &datasource.TableColumn{Name: "value"})
-			}
-		} else {
-			values = append(values, &datasource.RowValue{
-				Kind:        datasource.RowValue_TYPE_STRING,
-				StringValue: jm.MustString(),
-			})
-		}
-
-		table.Rows = append(table.Rows, &datasource.TableRow{Values: values})
+	err = bson.UnmarshalExtJSON([]byte(target), true, &aggregate)
+	if err != nil {
+		t.logger.Error(fmt.Sprintf("Failed: %+v", err))
+		return nil, err
 	}
-
-	return &datasource.DatasourceResponse{
-		Results: []*datasource.QueryResult{
-			&datasource.QueryResult{
-				RefId:  "search",
-				Tables: []*datasource.Table{&table},
-			},
-		},
-	}, nil
+	return aggregate, nil
 }
 
-var httpClient = &http.Client{
-	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{
-			Renegotiation: tls.RenegotiateFreelyAsClient,
-		},
-		Proxy: http.ProxyFromEnvironment,
-		Dial: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-			DualStack: true,
-		}).Dial,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-	},
-	Timeout: time.Duration(time.Second * 30),
+
+type TimeSeries struct {
+    Name       string   `json:"name" bson:"name"`
+    Value      float64  `json:"value" bson:"value"`
+    Timestamp  time.Time    `json:"ts" bson:"ts"`
+}
+func (t *JsonDatasource) parseQueryResponse(ctx context.Context, query *datasource.Query, resp *mongo.Cursor) (*datasource.QueryResult, error) {
+	qr := datasource.QueryResult{
+		RefId:  query.RefId,
+		Series: make([]*datasource.TimeSeries, 0),
+		Tables: make([]*datasource.Table, 0),
+	}
+	names := make(map[string]*datasource.TimeSeries)
+	for resp.Next(ctx) {
+		result := TimeSeries{}
+		err := resp.Decode(&result)
+		if err != nil {
+			return nil, err
+		}
+		t.logger.Debug(fmt.Sprintf("Return: %+v", result))
+		ts, ok := names[result.Name]
+		if ! ok {
+			ts = &datasource.TimeSeries{Name: result.Name}
+			names[result.Name] = ts
+		}
+		ts.Points = append(ts.Points, &datasource.Point{Timestamp: result.Timestamp.UnixNano() / 1000000, Value: result.Value})
+	}
+	for _, v:= range names {
+		qr.Series = append(qr.Series, v)
+	}
+	return &qr, nil
 }
