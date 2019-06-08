@@ -1,7 +1,9 @@
 # MongoDB datasource for Grafana
 
 ## Features
-Allows MongoDB to be used as a data source for Grafana by providing a proxy to convert the Grafana Data source [API](http://docs.grafana.org/plugins/developing/datasources/) into MongoDB aggregation queries
+Allows MongoDB to be used as a data source for Grafana by providing a backend plugin [API](https://grafana.com/docs/plugins/developing/backend-plugins-guide/) into MongoDB aggregation queries
+
+This package was forked from https://github.com/JamesOsgood/mongodb-grafana which is a purely frontend plugin.
 
 ## Requirements
 
@@ -14,12 +16,6 @@ Allows MongoDB to be used as a data source for Grafana by providing a proxy to c
 
 * Copy the whole mongodb-grafana dir into the Grafana plugins dir ( /usr/local/var/lib/grafana/plugins )
 * Restart the Grafana server. If installed via Homebrew, this will be `brew services restart grafana`
-
-### Install and Start the MongoDB proxy server
-
-* Open a command prompt in the mongodb-grafana directory
-* Run `npm install` to install the node.js dependencies
-* Run `npm run server` to start the REST API proxy to MongoDB. By default, the server listens on http://localhost:3333
 
 ## Examples
 
@@ -102,35 +98,3 @@ db.sensor_value.aggregate(
 ```    
 
 The dashboard in `examples\Sensor Values Count - Atlas.json` shows this.
-
-## Running the proxy as a service on a Mac
-
-* Install [forever-mac](https://www.npmjs.com/package/forever-mac)
-* Copy server/mongodb-grafana-proxy.plist to ~/Library/LaunchAgents
-* run `launchctl load mongodb-grafana-proxy` from ~/Library/LaunchAgents
-
-This launch ctrl plist runs the node script via forever. To check it's running, use `forever list`. Logs go into /usr/local/var/lib/grafana/plugins/mongodb-grafana/dist/server
-
-## Development
-
-To run grafana against a dev version of the plugin on a mac using grafana installed via Homebrew
- 
-* Stop the grafana service `brew services stop grafana`
-* Open a command prompt in /debugging
-* Run ./start_grafana.sh
-* Alter code
-* npm run build to build the UI
-* Developer tools -> empty cache and hard reload
-
-Note
-
-* Homebrew grafana versions in /usr/local/Cellar
-
-
-
-
-
-
-
-
-
