@@ -47,6 +47,25 @@ export class GenericDatasource {
     });
   }
 
+  interpolateVariable(value, variable) {
+    if (typeof value === 'string') {
+      if (variable.multi || variable.includeAll) {
+        return '"' + value + '"';
+      } else {
+        return value;
+      }
+    }
+
+    if (typeof value === 'number') {
+      return value;
+    }
+
+    var quotedValues = _.map(value, val => {
+      return '"' + val + '"';
+    });
+    return quotedValues.join(',');
+  }
+
   buildQueryParameters(options) {
     //remove placeholder targets
     options.targets = _.filter(options.targets, target => {
@@ -56,7 +75,7 @@ export class GenericDatasource {
     var targets = _.map(options.targets, target => {
       return {
         queryType: 'query',
-        target: this.templateSrv.replace(target.target, options.scopedVars, ''),
+        target: this.templateSrv.replace(target.target, options.scopedVars, this.interpolateVariable),
         refId: target.refId,
         hide: target.hide,
         type: target.type || 'timeserie',
