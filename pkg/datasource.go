@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 	"errors"
+	"reflect"
 
 	simplejson "github.com/bitly/go-simplejson"
 
@@ -14,6 +15,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 
 	"github.com/grafana/grafana_plugin_model/go/datasource"
 	hclog "github.com/hashicorp/go-hclog"
@@ -46,17 +48,18 @@ func (t *JsonDatasource) Query(ctx context.Context, tsdbReq *datasource.Datasour
 	default:
 		res, err = t.executeTimSeriesQuery(ctx, tsdbReq)
 	}
-		// Ths is a work-around for the 'Metric request error'
-		if res == nil && err != nil {
-			response := &datasource.DatasourceResponse{}
-			qr := datasource.QueryResult{
-				RefId:  "A",
-				Error:  fmt.Sprintf("%s", err),
-			}
-			response.Results = append(response.Results, &qr)
-			return response, nil
+	// Ths is a work-around for the 'Metric request error'
+	if res == nil && err != nil {
+		response := &datasource.DatasourceResponse{}
+		qr := datasource.QueryResult{
+			RefId:  "A",
+			Error:  fmt.Sprintf("%s", err),
 		}
-		return res, err
+		response.Results = append(response.Results, &qr)
+		t.logger.Error(fmt.Sprintf("%s", err))
+		return response, nil
+	}
+	return res, err
 }
 
 func (t *JsonDatasource) executeTestConnection(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
@@ -90,19 +93,27 @@ func (t *JsonDatasource) executeTimSeriesQuery(ctx context.Context, tsdbReq *dat
 	t.logger.Debug("Connected to MongoDB")
 
 	for _, query := range tsdbReq.Queries {
-		coll, aggregate, err := t.parseTarget(query.ModelJson, tsdbReq)
+		queryObj, err := t.parseTarget(query.ModelJson, tsdbReq)
 		if err != nil {
 			return nil, err
 		}
-		collection := client.Database(db).Collection(*coll)
-		t.logger.Debug(fmt.Sprintf("Sending: %+v", aggregate))
-		resp, err := collection.Aggregate(ctx, aggregate, nil)
+		collection := client.Database(db).Collection(queryObj.Collection)
+		t.logger.Debug(fmt.Sprintf("Sending: %+v", queryObj.Aggregate))
+		resp, err := collection.Aggregate(ctx, queryObj.Aggregate, nil)
 		if err != nil {
 			return nil, err
 		}
 		defer resp.Close(ctx)
 		t.logger.Debug(fmt.Sprintf("Response: %+v", resp))
-		res, err := t.parseQueryResponse(ctx, query, resp)
+
+		var res *datasource.QueryResult
+		if queryObj.Type == "timeserie" {
+			t.logger.Debug("Time series Query")
+			res, err = t.parseTimeseriesResponse(ctx, query, resp)
+		} else {
+			t.logger.Debug("Table Query")
+			res, err = t.parseTableResponse(ctx, query, resp)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -133,15 +144,26 @@ func (t *JsonDatasource) getClient(ctx context.Context, tsdbReq *datasource.Data
 	client, err := mongo.Connect(ctx, clientOptions)
 	return client, db, err
 }
+type QueryObj struct {
+	Collection string
+	Aggregate interface{}
+	Type string
+}
 
-func (t *JsonDatasource) parseTarget(queryStr string, tsdbReq *datasource.DatasourceRequest) (*string, interface {}, error) {
-	var aggregate interface{}
+func (t *JsonDatasource) parseTarget(queryStr string, tsdbReq *datasource.DatasourceRequest) (*QueryObj, error) {
+	queryObj := QueryObj{
+		Collection: "",
+		Aggregate: nil,
+		Type: "",
+	}
+
 
 	t.logger.Debug("QueryString: ", queryStr)
 	query, err := simplejson.NewJson([]byte(queryStr))
 	if err  != nil {
-		return nil, nil, err
+		return nil, err
 	}
+	queryObj.Type = query.Get("type").MustString("timeserie")
 	target := query.Get("target").MustString()
 	from := tsdbReq.TimeRange.FromEpochMs
 	to := tsdbReq.TimeRange.ToEpochMs
@@ -151,25 +173,25 @@ func (t *JsonDatasource) parseTarget(queryStr string, tsdbReq *datasource.Dataso
 	}
 	sepIdx := strings.Index(target, "(")
 	if sepIdx == -1 {
-		return nil, nil, errors.New("Could not locate db command")
+		return nil, errors.New("Could not locate db command")
 	}
 	sections := strings.Split(target[3:sepIdx], ".")
 	if sections[1] != "aggregate" {
-		return nil, nil, errors.New("Only 'aggregate' queries are supported")
+		return nil, errors.New("Only 'aggregate' queries are supported")
 	}
 	target = target[sepIdx+1:len(target)-1]
-	collection := sections[0]
+	queryObj.Collection = sections[0]
 	target = strings.Replace(target, "\"$from\"", "{\"$date\": {\"$numberLong\": \"" + strconv.FormatInt(from, 10) + "\"}}", -1)
 	target = strings.Replace(target, "\"$to\"", "{\"$date\": {\"$numberLong\": \"" + strconv.FormatInt(to, 10) + "\"}}", -1)
 	target = strings.Replace(target, "\"$maxDataPoints\"", strconv.Itoa(maxDataPoints), -1)
 	t.logger.Debug("Target: ", target)
 
-	err = bson.UnmarshalExtJSON([]byte(target), true, &aggregate)
+	err = bson.UnmarshalExtJSON([]byte(target), true, &queryObj.Aggregate)
 	if err != nil {
 		t.logger.Error(fmt.Sprintf("Failed: %+v", err))
-		return nil, nil, err
+		return nil, err
 	}
-	return &collection, aggregate, nil
+	return &queryObj, nil
 }
 
 
@@ -178,7 +200,8 @@ type TimeSeries struct {
     Value      float64  `json:"value" bson:"value"`
     Timestamp  time.Time    `json:"ts" bson:"ts"`
 }
-func (t *JsonDatasource) parseQueryResponse(ctx context.Context, query *datasource.Query, resp *mongo.Cursor) (*datasource.QueryResult, error) {
+
+func (t *JsonDatasource) parseTimeseriesResponse(ctx context.Context, query *datasource.Query, resp *mongo.Cursor) (*datasource.QueryResult, error) {
 	qr := datasource.QueryResult{
 		RefId:  query.RefId,
 		Series: make([]*datasource.TimeSeries, 0),
@@ -204,3 +227,63 @@ func (t *JsonDatasource) parseQueryResponse(ctx context.Context, query *datasour
 	}
 	return &qr, nil
 }
+
+func (t *JsonDatasource) parseTableResponse(ctx context.Context, query *datasource.Query, resp *mongo.Cursor) (*datasource.QueryResult, error) {
+	qr := datasource.QueryResult{
+		RefId:  query.RefId,
+		Series: make([]*datasource.TimeSeries, 0),
+		Tables: make([]*datasource.Table, 0),
+	}
+	table := datasource.Table{
+		Columns: make([]*datasource.TableColumn, 0),
+		Rows:    make([]*datasource.TableRow, 0),
+	}
+	for resp.Next(ctx) {
+		// var document bson.M
+		document := make(map[string]interface{})
+		err := resp.Decode(&document)
+		if err != nil {
+			return nil, err
+		}
+		t.logger.Debug(fmt.Sprintf("Return: %+v", document))
+		row := make([]*datasource.RowValue, 0)
+		for key, value := range document {
+			idx := -1
+			for k, v := range table.Columns {
+				if v.Name == key {
+					idx = k
+					break
+				}
+			}
+			if idx == -1 {
+				table.Columns = append(table.Columns, &datasource.TableColumn{Name: key})
+				idx = len(table.Columns) - 1
+			}
+			t.logger.Debug(fmt.Sprintf("Index (%s): %d", key, idx))
+			for len(row) < idx + 1 {
+				row = append(row, nil)
+			}
+			rv := datasource.RowValue{}
+			if fval, ok := value.(float64); ok {
+				rv.Kind = datasource.RowValue_TYPE_DOUBLE
+				rv.DoubleValue = fval
+			} else if ival, ok := value.(int64); ok {
+				rv.Kind = datasource.RowValue_TYPE_INT64
+				rv.Int64Value = ival
+			} else if sval, ok := value.(string); ok {
+				rv.Kind = datasource.RowValue_TYPE_STRING
+				rv.StringValue = sval
+			} else if tval, ok := value.(primitive.DateTime); ok {
+				rv.Kind = datasource.RowValue_TYPE_INT64
+				rv.Int64Value = int64(tval)
+			} else {
+				return nil, errors.New(fmt.Sprintf("Could not handle type %s of %s", reflect.TypeOf(value), key))
+			}
+			row[idx] = &rv
+		}
+		table.Rows = append(table.Rows, &datasource.TableRow{Values: row})
+	}
+	qr.Tables = append(qr.Tables, &table)
+	return &qr, nil
+}
+
