@@ -11,12 +11,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JamesOsgood/mongodb-grafana.git"
+    "url": "git+https://github.com/PhracturedBlue/mongodb-grafana-backend.git"
   },
-  "author": "James Osgood",
+  "author": "PhractureBlue",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/JamesOsgood/mongodb-grafana/issues"
+    "url": "https://github.com/PhracturedBlue/mongodb-grafana-backend/issues"
   },
   "engines": {
     "node": "6.10.0"
