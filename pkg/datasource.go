@@ -63,15 +63,15 @@ func (t *JsonDatasource) Query(ctx context.Context, tsdbReq *datasource.Datasour
 }
 
 func (t *JsonDatasource) executeTestConnection(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
-	client, _, err := t.getClient(ctx, tsdbReq)
+	dbopts, err := t.getClient(ctx, tsdbReq)
 	if err != nil {
 		return nil, err
 	}
-	err = client.Ping(ctx, nil)
+	err = dbopts.client.Ping(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	err = client.Disconnect(ctx)
+	err = dbopts.client.Disconnect(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -82,10 +82,11 @@ func (t *JsonDatasource) executeTestConnection(ctx context.Context, tsdbReq *dat
 func (t *JsonDatasource) executeTimSeriesQuery(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
 	response := &datasource.DatasourceResponse{}
 
-	client, db, err := t.getClient(ctx, tsdbReq)
+	dbopts, err := t.getClient(ctx, tsdbReq)
 	if err != nil {
 		return nil, err
 	}
+	client := dbopts.client
 	err = client.Ping(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -93,11 +94,11 @@ func (t *JsonDatasource) executeTimSeriesQuery(ctx context.Context, tsdbReq *dat
 	t.logger.Debug("Connected to MongoDB")
 
 	for _, query := range tsdbReq.Queries {
-		queryObj, err := t.parseTarget(query.ModelJson, tsdbReq)
+		queryObj, err := t.parseTarget(query, tsdbReq, dbopts.json)
 		if err != nil {
 			return nil, err
 		}
-		collection := client.Database(db).Collection(queryObj.Collection)
+		collection := client.Database(dbopts.db).Collection(queryObj.Collection)
 		t.logger.Debug(fmt.Sprintf("Sending: %+v", queryObj.Aggregate))
 		resp, err := collection.Aggregate(ctx, queryObj.Aggregate, nil)
 		if err != nil {
@@ -132,17 +133,28 @@ func (t *JsonDatasource) executeTimSeriesQuery(ctx context.Context, tsdbReq *dat
 	return response, nil
 }
 
-func (t *JsonDatasource) getClient(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*mongo.Client, string, error) {
+type DbOpts struct {
+	client *mongo.Client
+	json *simplejson.Json
+	db string
+}
+
+func (t *JsonDatasource) getClient(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*DbOpts, error) {
 	json, err := simplejson.NewJson([]byte(tsdbReq.Datasource.JsonData))
 	if err  != nil {
-		return nil, "", err
+		return nil, err
 	}
 	uri := json.Get("mongodb_url").MustString("mongodb://localhost:27017")
 	db := json.Get("mongodb_db").MustString("test")
 
 	clientOptions := options.Client().ApplyURI(uri)
 	client, err := mongo.Connect(ctx, clientOptions)
-	return client, db, err
+	dbopts := DbOpts{
+		client: client,
+		json: json,
+		db: db,
+		}
+	return &dbopts, err
 }
 type QueryObj struct {
 	Collection string
@@ -150,7 +162,7 @@ type QueryObj struct {
 	Type string
 }
 
-func (t *JsonDatasource) parseTarget(queryStr string, tsdbReq *datasource.DatasourceRequest) (*QueryObj, error) {
+func (t *JsonDatasource) parseTarget(query *datasource.Query, tsdbReq *datasource.DatasourceRequest, dbopts *simplejson.Json) (*QueryObj, error) {
 	queryObj := QueryObj{
 		Collection: "",
 		Aggregate: nil,
@@ -158,16 +170,17 @@ func (t *JsonDatasource) parseTarget(queryStr string, tsdbReq *datasource.Dataso
 	}
 
 
-	t.logger.Debug("QueryString: ", queryStr)
-	query, err := simplejson.NewJson([]byte(queryStr))
+	t.logger.Debug("QueryString: ", query.ModelJson)
+	queryJson, err := simplejson.NewJson([]byte(query.ModelJson))
 	if err  != nil {
 		return nil, err
 	}
-	queryObj.Type = query.Get("type").MustString("timeserie")
-	target := query.Get("target").MustString()
+	queryObj.Type = queryJson.Get("type").MustString("timeserie")
+	target := queryJson.Get("target").MustString()
 	from := tsdbReq.TimeRange.FromEpochMs
 	to := tsdbReq.TimeRange.ToEpochMs
-	maxDataPoints := query.Get("maxDataPoints").MustInt(1)
+	// intervalMs := query.IntervalMs
+	maxDataPoints := query.MaxDataPoints
 	if maxDataPoints == 0 {
 		maxDataPoints = 1
 	}
@@ -183,7 +196,7 @@ func (t *JsonDatasource) parseTarget(queryStr string, tsdbReq *datasource.Dataso
 	queryObj.Collection = sections[0]
 	target = strings.Replace(target, "\"$from\"", "{\"$date\": {\"$numberLong\": \"" + strconv.FormatInt(from, 10) + "\"}}", -1)
 	target = strings.Replace(target, "\"$to\"", "{\"$date\": {\"$numberLong\": \"" + strconv.FormatInt(to, 10) + "\"}}", -1)
-	target = strings.Replace(target, "\"$maxDataPoints\"", strconv.Itoa(maxDataPoints), -1)
+	target = strings.Replace(target, "\"$maxDataPoints\"", strconv.FormatInt(maxDataPoints, 10), -1)
 	t.logger.Debug("Target: ", target)
 
 	err = bson.UnmarshalExtJSON([]byte(target), true, &queryObj.Aggregate)
@@ -214,7 +227,7 @@ func (t *JsonDatasource) parseTimeseriesResponse(ctx context.Context, query *dat
 		if err != nil {
 			return nil, err
 		}
-		t.logger.Debug(fmt.Sprintf("Return: %+v", result))
+		// t.logger.Debug(fmt.Sprintf("Return: %+v", result))
 		ts, ok := names[result.Name]
 		if ! ok {
 			ts = &datasource.TimeSeries{Name: result.Name}
@@ -245,7 +258,7 @@ func (t *JsonDatasource) parseTableResponse(ctx context.Context, query *datasour
 		if err != nil {
 			return nil, err
 		}
-		t.logger.Debug(fmt.Sprintf("Return: %+v", document))
+		// t.logger.Debug(fmt.Sprintf("Return: %+v", document))
 		row := make([]*datasource.RowValue, 0)
 		for key, value := range document {
 			idx := -1
@@ -259,7 +272,6 @@ func (t *JsonDatasource) parseTableResponse(ctx context.Context, query *datasour
 				table.Columns = append(table.Columns, &datasource.TableColumn{Name: key})
 				idx = len(table.Columns) - 1
 			}
-			t.logger.Debug(fmt.Sprintf("Index (%s): %d", key, idx))
 			for len(row) < idx + 1 {
 				row = append(row, nil)
 			}
@@ -270,9 +282,15 @@ func (t *JsonDatasource) parseTableResponse(ctx context.Context, query *datasour
 			} else if ival, ok := value.(int64); ok {
 				rv.Kind = datasource.RowValue_TYPE_INT64
 				rv.Int64Value = ival
+			} else if ival, ok := value.(int32); ok {
+				rv.Kind = datasource.RowValue_TYPE_INT64
+				rv.Int64Value = int64(ival)
 			} else if sval, ok := value.(string); ok {
 				rv.Kind = datasource.RowValue_TYPE_STRING
 				rv.StringValue = sval
+			} else if bval, ok := value.(bool); ok {
+				rv.Kind = datasource.RowValue_TYPE_BOOL
+				rv.BoolValue = bval
 			} else if tval, ok := value.(primitive.DateTime); ok {
 				rv.Kind = datasource.RowValue_TYPE_INT64
 				rv.Int64Value = int64(tval)

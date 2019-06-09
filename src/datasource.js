@@ -77,6 +77,8 @@ export class GenericDatasource {
         queryType: 'query',
         target: this.templateSrv.replace(target.target, options.scopedVars, this.interpolateVariable),
         refId: target.refId,
+        intervalMs: options.intervalMs,
+        maxDataPoints: options.maxDataPoints,
         hide: target.hide,
         type: target.type || 'timeserie',
         datasourceId: this.id
