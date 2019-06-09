@@ -1,5 +1,5 @@
 {
-  "name": "grafana-mongodb",
+  "name": "grafana-mongodb-backend",
   "private": true,
   "version": "0.8.1",
   "description": "",

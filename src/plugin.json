@@ -1,6 +1,6 @@
 {
-  "name": "MongoDB",
-  "id": "grafana-mongodb-datasource",
+  "name": "MongoDB-BE",
+  "id": "grafana-mongodb-backend-datasource",
   "type": "datasource",
 
   "partials": {
@@ -8,26 +8,26 @@
   },
 
   "metrics": true,
-  "annotations": true,
+  "annotations":false,
   "alerting": true,
   "backend": true,
-  "executable": "mongodb-plugin",
+  "executable": "mongodb-be-plugin",
 
   "info": {
-    "description": "MongoDB datasource",
+    "description": "MongoDB Backend datasource",
     "author": {
-      "name": "James Osgood"
+      "name": "PhracturedBlue"
     },
     "logos": {
       "small": "img/MongoDB_Gray_Logo_FullColor_RGB-01.jpg",
       "large": "img/MongoDB_Gray_Logo_FullColor_RGB-01.jpg"
     },
     "links": [
-      {"name": "GitHub", "url": "https://github.com/grafana/simple-json-datasource"},
-      {"name": "MIT License", "url": "https://github.com/grafana/simple-json-datasource/blob/master/LICENSE"}
+      {"name": "GitHub", "url": "https://github.com/PhracturedBlue/mongodb-grafana-backend"},
+      {"name": "MIT License", "url": "https://github.com/PhracturedBlue/mongodb-grafana-backend/blob/master/LICENSE"}
     ],
     "version": "0.8.1",
-    "updated": "2018-08-14"
+    "updated": "2019-06-08"
   },
 
   "dependencies": {

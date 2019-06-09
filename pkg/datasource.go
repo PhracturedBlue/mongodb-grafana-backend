@@ -175,7 +175,7 @@ func (t *JsonDatasource) parseTarget(queryStr string, tsdbReq *datasource.Dataso
 	if sepIdx == -1 {
 		return nil, errors.New("Could not locate db command")
 	}
-	sections := strings.Split(target[3:sepIdx], ".")
+	sections := strings.Split(strings.TrimSpace(target[3:sepIdx]), ".")
 	if sections[1] != "aggregate" {
 		return nil, errors.New("Only 'aggregate' queries are supported")
 	}
