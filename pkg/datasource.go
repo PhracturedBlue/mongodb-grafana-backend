@@ -158,7 +158,7 @@ func (t *MongoDBDatasource) getClient(ctx context.Context, tsdbReq *datasource.D
 }
 type QueryObj struct {
 	Collection string
-	Aggregate interface{}
+	Aggregate bson.A
 	Type string
 }
 
@@ -204,6 +204,38 @@ func (t *MongoDBDatasource) parseTarget(query *datasource.Query, tsdbReq *dataso
 		t.logger.Error(fmt.Sprintf("Failed: %+v", err))
 		return nil, err
 	}
+	t.logger.Debug(fmt.Sprintf("All Items: %+v", queryObj.Aggregate))
+	for k, v := range queryObj.Aggregate {
+		if dict, ok := v.(primitive.D); ok {
+			for _, _stage := range dbopts.Get("stages").MustArray() {
+				stage, ok := _stage.(map[string]interface{})
+				if ok == false {
+					continue
+				}
+				if dict[0].Key == "$" + stage["name"].(string) {
+					t.logger.Debug(fmt.Sprintf("Stage: %s ==> %s", stage["name"], stage["stage"].(string)))
+					var replace string
+					if sval, ok := dict[0].Value.(string); ok {
+						replace = sval
+					} else {
+						res, err := bson.MarshalExtJSON(dict[0].Value, true, true)
+						if err != nil {
+							return nil, errors.New(fmt.Sprintf("Can't Marshall result: (%s) %+v", reflect.TypeOf(dict[0].Value), dict[0].Value))
+						}
+						replace = string(res)
+					}
+					newval := strings.Replace(stage["stage"].(string), "$QUERY", replace[1:len(replace)-1], -1)
+					t.logger.Debug(fmt.Sprintf("Found %s ==> >%s<", stage["name"], newval))
+					var replStage bson.D
+					err = bson.UnmarshalExtJSON([]byte(newval), true, &replStage)
+					queryObj.Aggregate[k] = replStage
+				}
+			}
+		}
+		t.logger.Debug(fmt.Sprintf("Item type: %s ==> %s", reflect.TypeOf(k), reflect.TypeOf(v)))
+		t.logger.Debug(fmt.Sprintf("Item: %+v", v))
+	}
+	t.logger.Debug(fmt.Sprintf("Replaced Items: %+v", queryObj.Aggregate))
 	return &queryObj, nil
 }
 

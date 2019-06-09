@@ -1,8 +1,6 @@
 import {MongoDBDatasource} from './datasource';
 import {MongoDBDatasourceQueryCtrl} from './query_ctrl';
-
-class MongoDBConfigCtrl {}
-MongoDBConfigCtrl.templateUrl = 'partials/config.html';
+import {MongoDBConfigCtrl} from './config_ctrl';
 
 class MongoDBQueryOptionsCtrl {}
 MongoDBQueryOptionsCtrl.templateUrl = 'partials/query.options.html';
