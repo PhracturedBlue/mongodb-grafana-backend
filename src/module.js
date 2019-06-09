@@ -1,19 +1,19 @@
-import {GenericDatasource} from './datasource';
-import {GenericDatasourceQueryCtrl} from './query_ctrl';
+import {MongoDBDatasource} from './datasource';
+import {MongoDBDatasourceQueryCtrl} from './query_ctrl';
 
-class GenericConfigCtrl {}
-GenericConfigCtrl.templateUrl = 'partials/config.html';
+class MongoDBConfigCtrl {}
+MongoDBConfigCtrl.templateUrl = 'partials/config.html';
 
-class GenericQueryOptionsCtrl {}
-GenericQueryOptionsCtrl.templateUrl = 'partials/query.options.html';
+class MongoDBQueryOptionsCtrl {}
+MongoDBQueryOptionsCtrl.templateUrl = 'partials/query.options.html';
 
-class GenericAnnotationsQueryCtrl {}
-GenericAnnotationsQueryCtrl.templateUrl = 'partials/annotations.editor.html'
+class MongoDBAnnotationsQueryCtrl {}
+MongoDBAnnotationsQueryCtrl.templateUrl = 'partials/annotations.editor.html'
 
 export {
-  GenericDatasource as Datasource,
-  GenericDatasourceQueryCtrl as QueryCtrl,
-  GenericConfigCtrl as ConfigCtrl,
-  GenericQueryOptionsCtrl as QueryOptionsCtrl,
-  GenericAnnotationsQueryCtrl as AnnotationsQueryCtrl
+  MongoDBDatasource as Datasource,
+  MongoDBDatasourceQueryCtrl as QueryCtrl,
+  MongoDBConfigCtrl as ConfigCtrl,
+  MongoDBQueryOptionsCtrl as QueryOptionsCtrl,
+  MongoDBAnnotationsQueryCtrl as AnnotationsQueryCtrl
 };

@@ -22,12 +22,12 @@ import (
 	plugin "github.com/hashicorp/go-plugin"
 )
 
-type JsonDatasource struct {
+type MongoDBDatasource struct {
 	plugin.NetRPCUnsupportedPlugin
 	logger hclog.Logger
 }
 
-func (t *JsonDatasource) Query(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
+func (t *MongoDBDatasource) Query(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
 	t.logger.Debug("Query", "datasource", tsdbReq.Datasource.Name, "TimeRange", tsdbReq.TimeRange)
 	json, err := simplejson.NewJson([]byte(tsdbReq.Queries[0].ModelJson))
 	if err  != nil {
@@ -62,7 +62,7 @@ func (t *JsonDatasource) Query(ctx context.Context, tsdbReq *datasource.Datasour
 	return res, err
 }
 
-func (t *JsonDatasource) executeTestConnection(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
+func (t *MongoDBDatasource) executeTestConnection(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
 	dbopts, err := t.getClient(ctx, tsdbReq)
 	if err != nil {
 		return nil, err
@@ -79,7 +79,7 @@ func (t *JsonDatasource) executeTestConnection(ctx context.Context, tsdbReq *dat
 	return response, nil
 }
 
-func (t *JsonDatasource) executeTimSeriesQuery(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
+func (t *MongoDBDatasource) executeTimSeriesQuery(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
 	response := &datasource.DatasourceResponse{}
 
 	dbopts, err := t.getClient(ctx, tsdbReq)
@@ -139,7 +139,7 @@ type DbOpts struct {
 	db string
 }
 
-func (t *JsonDatasource) getClient(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*DbOpts, error) {
+func (t *MongoDBDatasource) getClient(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*DbOpts, error) {
 	json, err := simplejson.NewJson([]byte(tsdbReq.Datasource.JsonData))
 	if err  != nil {
 		return nil, err
@@ -162,7 +162,7 @@ type QueryObj struct {
 	Type string
 }
 
-func (t *JsonDatasource) parseTarget(query *datasource.Query, tsdbReq *datasource.DatasourceRequest, dbopts *simplejson.Json) (*QueryObj, error) {
+func (t *MongoDBDatasource) parseTarget(query *datasource.Query, tsdbReq *datasource.DatasourceRequest, dbopts *simplejson.Json) (*QueryObj, error) {
 	queryObj := QueryObj{
 		Collection: "",
 		Aggregate: nil,
@@ -214,7 +214,7 @@ type TimeSeries struct {
     Timestamp  time.Time    `json:"ts" bson:"ts"`
 }
 
-func (t *JsonDatasource) parseTimeseriesResponse(ctx context.Context, query *datasource.Query, resp *mongo.Cursor) (*datasource.QueryResult, error) {
+func (t *MongoDBDatasource) parseTimeseriesResponse(ctx context.Context, query *datasource.Query, resp *mongo.Cursor) (*datasource.QueryResult, error) {
 	qr := datasource.QueryResult{
 		RefId:  query.RefId,
 		Series: make([]*datasource.TimeSeries, 0),
@@ -241,7 +241,7 @@ func (t *JsonDatasource) parseTimeseriesResponse(ctx context.Context, query *dat
 	return &qr, nil
 }
 
-func (t *JsonDatasource) parseTableResponse(ctx context.Context, query *datasource.Query, resp *mongo.Cursor) (*datasource.QueryResult, error) {
+func (t *MongoDBDatasource) parseTableResponse(ctx context.Context, query *datasource.Query, resp *mongo.Cursor) (*datasource.QueryResult, error) {
 	qr := datasource.QueryResult{
 		RefId:  query.RefId,
 		Series: make([]*datasource.TimeSeries, 0),

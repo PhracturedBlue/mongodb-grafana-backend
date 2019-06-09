@@ -1,6 +1,6 @@
 import _ from "lodash";
 
-export class GenericDatasource {
+export class MongoDBDatasource {
 
   constructor(instanceSettings, $q, backendSrv, templateSrv, timeSrv) {
     this.type = instanceSettings.type;

@@ -1,7 +1,7 @@
 import {QueryCtrl} from 'app/plugins/sdk';
 import './css/query-editor.css!'
 
-export class GenericDatasourceQueryCtrl extends QueryCtrl {
+export class MongoDBDatasourceQueryCtrl extends QueryCtrl {
 
   constructor($scope, $injector)  {
     super($scope, $injector);
@@ -25,5 +25,5 @@ export class GenericDatasourceQueryCtrl extends QueryCtrl {
   }
 }
 
-GenericDatasourceQueryCtrl.templateUrl = 'partials/query.editor.html';
+MongoDBDatasourceQueryCtrl.templateUrl = 'partials/query.editor.html';
 
