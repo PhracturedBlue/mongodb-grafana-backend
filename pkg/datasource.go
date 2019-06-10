@@ -70,7 +70,12 @@ func (t *MongoDBDatasource) executeMetricsQuery(ctx context.Context, tsdbReq *da
 	if err  != nil {
 		return nil, err
 	}
-	target := queryJson.Get("target").MustString()
+	metric := ""
+	if queryJson.Get("refId").MustString() == "search" {
+		metric = "search"
+	} else {
+		metric = queryJson.Get("target").MustString()
+	}
 	response := &datasource.DatasourceResponse{}
 	table := datasource.Table{
 		Columns: []*datasource.TableColumn{
@@ -83,8 +88,8 @@ func (t *MongoDBDatasource) executeMetricsQuery(ctx context.Context, tsdbReq *da
 		Series: make([]*datasource.TimeSeries, 0),
 		Tables: []*datasource.Table{&table},
 	}
-	t.logger.Debug("Got Metrics Target: " + target)
-	switch target {
+	t.logger.Debug("Got Metrics Target: " + metric)
+	switch metric {
 	case "ping":
 		err = dbopts.client.Ping(ctx, nil)
 	case "list_collections":
@@ -96,6 +101,33 @@ func (t *MongoDBDatasource) executeMetricsQuery(ctx context.Context, tsdbReq *da
 				rv := datasource.RowValue{Kind: datasource.RowValue_TYPE_STRING, StringValue: k}
 				row := make([]*datasource.RowValue, 0)
 				row = append(row, &rv)
+				table.Rows = append(table.Rows, &datasource.TableRow{Values: row})
+			}
+		}
+	case "search":
+		queryObj, err := t.parseTarget(query, tsdbReq, dbopts.json)
+		t.logger.Debug("Sending: " + t.bsonToJson(queryObj.Aggregate))
+		if err != nil {
+			return nil, err
+		}
+		resp, err := dbopts.client.Database(dbopts.db).Collection(queryObj.Collection).Aggregate(ctx, queryObj.Aggregate, nil)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Close(ctx)
+		for resp.Next(ctx) {
+			document := make(map[string]interface{})
+			err := resp.Decode(&document)
+			if err != nil {
+				return nil, err
+			}
+			if val, ok := document["_id"]; ok {
+				rv, err := mapRowValue("_id", val)
+				if err != nil {
+					return nil, err
+				}
+				row := make([]*datasource.RowValue, 0)
+				row = append(row, rv)
 				table.Rows = append(table.Rows, &datasource.TableRow{Values: row})
 			}
 		}
@@ -219,6 +251,18 @@ func (t *MongoDBDatasource) parseTarget(query *datasource.Query, tsdbReq *dataso
 		maxDataPoints = 1
 	}
 	queryObj.Collection = queryJson.Get("collection").MustString()
+	if queryObj.Collection == "" && target[0:2] == "db" {
+		sepIdx := strings.Index(target, "(")
+		if sepIdx == -1 {
+			return nil, errors.New("Could not locate db command")
+		}
+		sections := strings.Split(strings.TrimSpace(target[3:sepIdx]), ".")
+		if sections[1] != "aggregate" {
+			return nil, errors.New("Only 'aggregate' queries are supported")
+		}
+		target = target[sepIdx+1:len(target)-1]
+		queryObj.Collection = sections[0]
+	}
 	if queryObj.Collection == "" {
 		return nil, errors.New("No collection specified")
 	}
@@ -346,29 +390,11 @@ func (t *MongoDBDatasource) parseTableResponse(ctx context.Context, query *datas
 			for len(row) < idx + 1 {
 				row = append(row, nil)
 			}
-			rv := datasource.RowValue{}
-			if fval, ok := value.(float64); ok {
-				rv.Kind = datasource.RowValue_TYPE_DOUBLE
-				rv.DoubleValue = fval
-			} else if ival, ok := value.(int64); ok {
-				rv.Kind = datasource.RowValue_TYPE_INT64
-				rv.Int64Value = ival
-			} else if ival, ok := value.(int32); ok {
-				rv.Kind = datasource.RowValue_TYPE_INT64
-				rv.Int64Value = int64(ival)
-			} else if sval, ok := value.(string); ok {
-				rv.Kind = datasource.RowValue_TYPE_STRING
-				rv.StringValue = sval
-			} else if bval, ok := value.(bool); ok {
-				rv.Kind = datasource.RowValue_TYPE_BOOL
-				rv.BoolValue = bval
-			} else if tval, ok := value.(primitive.DateTime); ok {
-				rv.Kind = datasource.RowValue_TYPE_INT64
-				rv.Int64Value = int64(tval)
-			} else {
-				return nil, errors.New(fmt.Sprintf("Could not handle type %s of %s", reflect.TypeOf(value), key))
+			rv, err := mapRowValue(key, value)
+			if err != nil {
+				return nil, err
 			}
-			row[idx] = &rv
+			row[idx] = rv
 		}
 		table.Rows = append(table.Rows, &datasource.TableRow{Values: row})
 	}
@@ -397,3 +423,28 @@ func varSub(target string, from int64, to int64, maxDataPoints int64) (string) {
 	return target
 }
 
+func mapRowValue(key string, value interface{}) (*datasource.RowValue, error) {
+	rv := datasource.RowValue{}
+	if fval, ok := value.(float64); ok {
+		rv.Kind = datasource.RowValue_TYPE_DOUBLE
+		rv.DoubleValue = fval
+	} else if ival, ok := value.(int64); ok {
+		rv.Kind = datasource.RowValue_TYPE_INT64
+		rv.Int64Value = ival
+	} else if ival, ok := value.(int32); ok {
+		rv.Kind = datasource.RowValue_TYPE_INT64
+		rv.Int64Value = int64(ival)
+	} else if sval, ok := value.(string); ok {
+		rv.Kind = datasource.RowValue_TYPE_STRING
+		rv.StringValue = sval
+	} else if bval, ok := value.(bool); ok {
+		rv.Kind = datasource.RowValue_TYPE_BOOL
+		rv.BoolValue = bval
+	} else if tval, ok := value.(primitive.DateTime); ok {
+		rv.Kind = datasource.RowValue_TYPE_INT64
+		rv.Int64Value = int64(tval)
+	} else {
+		return nil, errors.New(fmt.Sprintf("Could not handle type %s of %s", reflect.TypeOf(value), key))
+	}
+	return &rv, nil
+}
