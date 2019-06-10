@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"sort"
 	"strconv"
 	"time"
 	"errors"
@@ -90,6 +91,7 @@ func (t *MongoDBDatasource) executeMetricsQuery(ctx context.Context, tsdbReq *da
 		collections, err := dbopts.client.Database(dbopts.db).ListCollectionNames(ctx, bson.D{{}})
 		t.logger.Debug(fmt.Sprintf("List Collections: (%s) %v -> %+v", dbopts.db, err, collections))
 		if (err == nil) {
+			sort.Strings(collections)
 			for _, k := range collections {
 				rv := datasource.RowValue{Kind: datasource.RowValue_TYPE_STRING, StringValue: k}
 				row := make([]*datasource.RowValue, 0)
