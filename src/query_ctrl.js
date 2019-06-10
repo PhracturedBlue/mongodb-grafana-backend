@@ -16,10 +16,6 @@ export class MongoDBDatasourceQueryCtrl extends QueryCtrl {
     return this.datasource.metricFindQuery(query || '');
   }
 
-  toggleEditorMode() {
-    this.target.rawQuery = !this.target.rawQuery;
-  }
-
   onChangeInternal() {
     this.panelCtrl.refresh(); // Asks the panel to refresh data.
   }
