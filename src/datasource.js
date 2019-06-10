@@ -69,13 +69,14 @@ export class MongoDBDatasource {
   buildQueryParameters(options) {
     //remove placeholder targets
     options.targets = _.filter(options.targets, target => {
-      return target.target !== 'select metric';
+      return target.target !== '[]';
     });
 
     var targets = _.map(options.targets, target => {
       return {
-        queryType: 'query',
+        queryType: 'timeSeriesQuery',
         target: this.templateSrv.replace(target.target, options.scopedVars, this.interpolateVariable),
+        collection: target.collection,
         refId: target.refId,
         intervalMs: options.intervalMs,
         maxDataPoints: options.maxDataPoints,
@@ -91,21 +92,18 @@ export class MongoDBDatasource {
   }
 
   testDatasource() {
-    var query = {
-        range: this.timeSrv.timeRange(),
-        targets: [{
-          queryType: 'testConnection',
-          target: '',
-          refId: "A",
-          datasourceId: 0
-        }]
-      };
-    return this.doRequest(query)
-    .then(response => {
-      if (response.status === 200) {
-        return { status: response.data.status, message: response.data.message, title: response.data.display_status };
-      }
-    });
+    return this.metricFindQuery('ping')
+        .then(res => {
+        return { status: 'success', message: 'Database Connection OK' };
+      })
+      .catch(err => {
+        console.log(err);
+        if (err.data && err.data.message) {
+          return { status: 'error', message: err.data.message };
+        } else {
+          return { status: 'error', message: err.status };
+        }
+      });
   }
 
   annotationQuery(options) {
@@ -140,18 +138,15 @@ export class MongoDBDatasource {
   }
 
   metricFindQuery(query) {
-    var range = this.timeSrv.timeRange();
-    var targets = [{
-      queryType: 'search',
-      target: this.templateSrv.replace(query, null, ''),
-      db: this.db,
-      datasourceId: this.id,
-      refId: "search",
-    }];
     var options = {
-      range: range,
-      targets: targets
-    };
+        range: this.timeSrv.timeRange(),
+        targets: [{
+          queryType: 'metricsQuery',
+          target: query,
+          refId: "search",
+          datasourceId: this.id,
+        }]
+      };
     return this.doRequest(options).then(this.mapToTextValue);
   }
 

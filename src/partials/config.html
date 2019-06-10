@@ -24,11 +24,11 @@
       <span class="gf-form-label">
         <i class="fa fa-remove pointer" ng-click="ctrl.removeStage(map)"></i>
       </span>
-      <input type="text" ng-model="map.name" placeholder="custom" class="gf-form-input max-width-15" ng-blur="ctrl.render()">
+      <input type="text" ng-model="map.name" placeholder="custom" class="gf-form-input max-width-10" ng-blur="ctrl.render()">
       <span class="gf-form-label">
         <i class="fa fa-arrow-right"></i>
       </span>
-      <input type="text" placeholder="" ng-model="map.stage" class="gf-form-input width-30" ng-blur="ctrl.render()">
+      <textarea class="gf-form-input width-100" rows="5" cols="150" spellcheck="false" ng-model="map.stage" ng-blur="ctrl.render()">
     </div>
 
     <div class="gf-form-button-row">

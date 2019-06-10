@@ -38,15 +38,12 @@ func (t *MongoDBDatasource) Query(ctx context.Context, tsdbReq *datasource.Datas
 
 	var res *datasource.DatasourceResponse
 	switch queryType {
-	case "testConnection":
-		res, err = t.executeTestConnection(ctx, tsdbReq)
-	//case "metricsQuery":
-	//	//return t.executeMetricsQuery(ctx, tsdbReq)
-	//	return nil, nil
+	case "metricsQuery":
+		return t.executeMetricsQuery(ctx, tsdbReq)
 	case "timeSeriesQuery":
 		fallthrough
 	default:
-		res, err = t.executeTimSeriesQuery(ctx, tsdbReq)
+		res, err = t.executeTimeseriesQuery(ctx, tsdbReq)
 	}
 	// Ths is a work-around for the 'Metric request error'
 	if res == nil && err != nil {
@@ -62,12 +59,47 @@ func (t *MongoDBDatasource) Query(ctx context.Context, tsdbReq *datasource.Datas
 	return res, err
 }
 
-func (t *MongoDBDatasource) executeTestConnection(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
+func (t *MongoDBDatasource) executeMetricsQuery(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
 	dbopts, err := t.getClient(ctx, tsdbReq)
 	if err != nil {
 		return nil, err
 	}
-	err = dbopts.client.Ping(ctx, nil)
+	query := tsdbReq.Queries[0]
+	queryJson, err := simplejson.NewJson([]byte(query.ModelJson))
+	if err  != nil {
+		return nil, err
+	}
+	target := queryJson.Get("target").MustString()
+	response := &datasource.DatasourceResponse{}
+	table := datasource.Table{
+		Columns: []*datasource.TableColumn{
+                        &datasource.TableColumn{Name: "value"},
+		},
+		Rows:    make([]*datasource.TableRow, 0),
+	}
+	qr := datasource.QueryResult{
+		RefId:  query.RefId,
+		Series: make([]*datasource.TimeSeries, 0),
+		Tables: []*datasource.Table{&table},
+	}
+	t.logger.Debug("Got Metrics Target: " + target)
+	switch target {
+	case "ping":
+		err = dbopts.client.Ping(ctx, nil)
+	case "list_collections":
+		collections, err := dbopts.client.Database(dbopts.db).ListCollectionNames(ctx, bson.D{{}})
+		t.logger.Debug(fmt.Sprintf("List Collections: (%s) %v -> %+v", dbopts.db, err, collections))
+		if (err == nil) {
+			for _, k := range collections {
+				rv := datasource.RowValue{Kind: datasource.RowValue_TYPE_STRING, StringValue: k}
+				row := make([]*datasource.RowValue, 0)
+				row = append(row, &rv)
+				table.Rows = append(table.Rows, &datasource.TableRow{Values: row})
+			}
+		}
+	default:
+		return nil, errors.New(fmt.Sprintf("Unsupported Metric: %s", query))
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -75,11 +107,11 @@ func (t *MongoDBDatasource) executeTestConnection(ctx context.Context, tsdbReq *
 	if err != nil {
 		return nil, err
 	}
-	response := &datasource.DatasourceResponse{}
+	response.Results = append(response.Results, &qr)
 	return response, nil
 }
 
-func (t *MongoDBDatasource) executeTimSeriesQuery(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
+func (t *MongoDBDatasource) executeTimeseriesQuery(ctx context.Context, tsdbReq *datasource.DatasourceRequest) (*datasource.DatasourceResponse, error) {
 	response := &datasource.DatasourceResponse{}
 
 	dbopts, err := t.getClient(ctx, tsdbReq)
@@ -184,16 +216,10 @@ func (t *MongoDBDatasource) parseTarget(query *datasource.Query, tsdbReq *dataso
 	if maxDataPoints == 0 {
 		maxDataPoints = 1
 	}
-	sepIdx := strings.Index(target, "(")
-	if sepIdx == -1 {
-		return nil, errors.New("Could not locate db command")
+	queryObj.Collection = queryJson.Get("collection").MustString()
+	if queryObj.Collection == "" {
+		return nil, errors.New("No collection specified")
 	}
-	sections := strings.Split(strings.TrimSpace(target[3:sepIdx]), ".")
-	if sections[1] != "aggregate" {
-		return nil, errors.New("Only 'aggregate' queries are supported")
-	}
-	target = target[sepIdx+1:len(target)-1]
-	queryObj.Collection = sections[0]
 	target = varSub(target, from, to, maxDataPoints)
 	t.logger.Debug("Target: ", target)
 

@@ -3,7 +3,24 @@
     <div class="gf-form max-width-8">
       <select class="gf-form-input" ng-model="ctrl.target.type" ng-options="f as f for f in ['table', 'timeserie']"></select>
     </div>
-
+    <div class="gf-form">
+      <label class="gf-form-label query-keyword width-3">db.</label>
+      <metric-segment
+        segment="ctrl.collectionSegment"
+        get-options="ctrl.getCollections()"
+        on-change="ctrl.collectionChanged()"
+      ></metric-segment>
+      <label class="gf-form-label query-keyword width-7">.aggregate</label>
+<!--
+      <div class="gf-form-select-wrapper">
+        <select
+          class="gf-form-input gf-size-auto"
+          ng-model="ctrl.target.collection"
+          ng-options="f as f for f in ['col1', 'col2']"
+        ></select>
+      </div>
+-->
+    </div>
     <textarea class="gf-form-input" rows="5" cols="150" ng-model="ctrl.target.target" spellcheck="false" ng-blur="ctrl.onChangeInternal()" />
 
     <div class="gf-form gf-form--auto">
