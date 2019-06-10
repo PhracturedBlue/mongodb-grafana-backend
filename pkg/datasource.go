@@ -99,7 +99,7 @@ func (t *MongoDBDatasource) executeTimSeriesQuery(ctx context.Context, tsdbReq *
 			return nil, err
 		}
 		collection := client.Database(dbopts.db).Collection(queryObj.Collection)
-		t.logger.Debug(fmt.Sprintf("Sending: %+v", queryObj.Aggregate))
+		t.logger.Debug("Sending: " + t.bsonToJson(queryObj.Aggregate))
 		resp, err := collection.Aggregate(ctx, queryObj.Aggregate, nil)
 		if err != nil {
 			return nil, err
@@ -194,9 +194,7 @@ func (t *MongoDBDatasource) parseTarget(query *datasource.Query, tsdbReq *dataso
 	}
 	target = target[sepIdx+1:len(target)-1]
 	queryObj.Collection = sections[0]
-	target = strings.Replace(target, "\"$from\"", "{\"$date\": {\"$numberLong\": \"" + strconv.FormatInt(from, 10) + "\"}}", -1)
-	target = strings.Replace(target, "\"$to\"", "{\"$date\": {\"$numberLong\": \"" + strconv.FormatInt(to, 10) + "\"}}", -1)
-	target = strings.Replace(target, "\"$maxDataPoints\"", strconv.FormatInt(maxDataPoints, 10), -1)
+	target = varSub(target, from, to, maxDataPoints)
 	t.logger.Debug("Target: ", target)
 
 	err = bson.UnmarshalExtJSON([]byte(target), true, &queryObj.Aggregate)
@@ -205,6 +203,7 @@ func (t *MongoDBDatasource) parseTarget(query *datasource.Query, tsdbReq *dataso
 		return nil, err
 	}
 	t.logger.Debug(fmt.Sprintf("All Items: %+v", queryObj.Aggregate))
+	var newAggregate bson.A
 	for k, v := range queryObj.Aggregate {
 		if dict, ok := v.(primitive.D); ok {
 			for _, _stage := range dbopts.Get("stages").MustArray() {
@@ -225,16 +224,28 @@ func (t *MongoDBDatasource) parseTarget(query *datasource.Query, tsdbReq *dataso
 						replace = string(res)
 					}
 					newval := strings.Replace(stage["stage"].(string), "$QUERY", replace[1:len(replace)-1], -1)
+					newval = varSub(newval, from, to, maxDataPoints)
 					t.logger.Debug(fmt.Sprintf("Found %s ==> >%s<", stage["name"], newval))
-					var replStage bson.D
-					err = bson.UnmarshalExtJSON([]byte(newval), true, &replStage)
-					queryObj.Aggregate[k] = replStage
+					var replStage bson.A
+					err = bson.UnmarshalExtJSON([]byte("[" + newval + "]"), true, &replStage)
+					if err != nil {
+						return nil, errors.New(fmt.Sprintf("Failed to parse stage macro: %s", err))
+					}
+					for _, v1 := range replStage {
+						newAggregate = append(newAggregate, v1)
+					}
+					v = nil
+					break
 				}
 			}
 		}
-		t.logger.Debug(fmt.Sprintf("Item type: %s ==> %s", reflect.TypeOf(k), reflect.TypeOf(v)))
-		t.logger.Debug(fmt.Sprintf("Item: %+v", v))
+		if v != nil {
+			newAggregate = append(newAggregate, v)
+			t.logger.Debug(fmt.Sprintf("Item type: %s ==> %s", reflect.TypeOf(k), reflect.TypeOf(v)))
+			t.logger.Debug(fmt.Sprintf("Item: %+v", v))
+		}
 	}
+	queryObj.Aggregate = newAggregate
 	t.logger.Debug(fmt.Sprintf("Replaced Items: %+v", queryObj.Aggregate))
 	return &queryObj, nil
 }
@@ -335,5 +346,26 @@ func (t *MongoDBDatasource) parseTableResponse(ctx context.Context, query *datas
 	}
 	qr.Tables = append(qr.Tables, &table)
 	return &qr, nil
+}
+
+func (t *MongoDBDatasource) bsonToJson(data bson.A) (string) {
+	var strs []string
+	for _, v := range data {
+		res, err := bson.MarshalExtJSON(v, true, true)
+		if err != nil {
+			t.logger.Error(fmt.Sprintf("Failed to Marshal data: %s", err))
+			strs = append(strs, fmt.Sprintf("%+v", v))
+		} else {
+			strs = append(strs, string(res))
+		}
+	}
+	return "[" + strings.Join(strs, ",") + "]"
+}
+
+func varSub(target string, from int64, to int64, maxDataPoints int64) (string) {
+	target = strings.Replace(target, "\"$from\"", "{\"$date\": {\"$numberLong\": \"" + strconv.FormatInt(from, 10) + "\"}}", -1)
+	target = strings.Replace(target, "\"$to\"", "{\"$date\": {\"$numberLong\": \"" + strconv.FormatInt(to, 10) + "\"}}", -1)
+	target = strings.Replace(target, "\"$maxDataPoints\"", strconv.FormatInt(maxDataPoints, 10), -1)
+	return target
 }
 
