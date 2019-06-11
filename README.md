@@ -12,6 +12,9 @@ This package was forked from https://github.com/JamesOsgood/mongodb-grafana whic
 
 ## Installation
 
+The git repo does not include the dist/ dirctory needed for grafana.  Either download a pre-built release from
+https://github.com/PhracturedBlue/mongodb-grafana-backend/releases or build via `make`
+
 ### Install the Grafana plugin components
 
 * Copy the whole mongodb-grafana dir into the Grafana plugins dir ( /usr/local/var/lib/grafana/plugins )
