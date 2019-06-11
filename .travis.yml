@@ -26,5 +26,5 @@ deploy:
   file: mongodb-grafana-backend.zip
   on:
     repo: PhracturedBlue/mongodb-grafana-backend
-    # tags: true
+    tags: true
   skip_cleanup: true
