@@ -28,4 +28,3 @@ deploy:
     repo: PhracturedBlue/mongodb-grafana-backend
     # tags: true
   skip_cleanup: true
-  draft: true
