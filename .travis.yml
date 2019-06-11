@@ -17,13 +17,13 @@ script:
 - gox -os="linux darwin windows" -arch="amd64" -output="./dist/mongodb-be-plugin_{{.OS}}_{{.Arch}}" ./pkg/
 
 before_deploy:
-- zip -r mongodb-grafana-backend.zip dist/
+- zip -r mongodb-grafana-backend-$TRAVIS_TAG.zip dist/
 
 deploy:
   provider: releases
   api_key:
     secure: b/tIYZbxGzVSyn4TEaOsn1hgJvdm6qFcppOtd74H05B7pSXCRS6DhEZ/hS/TweL0Ma47LSkOvov5iuMX9m+F6kh9b6MfEhcfN70ibuV+hOd8hJaR0FpWJkQd1LfT/8zmO2eEJ0cdJ0oE8TdFnVdfKdBYtIskOSn9354OHdi4i5W8z4LZHgtjunoz0GJdppXaOSTE/LzBFjs2uuLDno7yRDkSBZuuxtX9eAkxKsHk9TvzzOdAEFqHOgNdUuZXquBfjS4jTGFV4YU5/f9QJB+J94280zzdJ9KsV1UFJxuqEdjRdq8MXd39rfc6TddVXaYQIjfc4ty4fysMCfTRZQFIHdajA1xePpT3XoMLqZNO2jxANQ696jSTMfWGWwr9CCaJnYGC3sF83x5GjXh6k9LzIUNkf0wjVXu0XYxIQPfqUWTcMb7Px+18RsWeL0D6bqohXBXMuDWYkInh5M64JwPAstj7rBaDuwnRSxcii7acX0wT8Ym8EAKv90ihOwz5uC2xBT4OZBPYPA2Ii2FmeUgA2BFc0c1ro1pgDooyLZMlMyIYqvgzPF3Gb7U7Lbv9N6S097n4WK0brr9pLeZm+TacX/0rMfS7IKvU5NorZdF/ZkhkeMuuIaEvd+dqOy1uGRu+NAPVjS9cAdubDZKttxZNv8T323eRmDN/NwyJUCQwHrc=
-  file: mongodb-grafana-backend.zip
+  file: mongodb-grafana-backend-$TRAVIS_TAG.zip
   on:
     repo: PhracturedBlue/mongodb-grafana-backend
     tags: true
